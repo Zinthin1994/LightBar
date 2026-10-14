@@ -1,0 +1,3 @@
+# LightBar: let the desktop user drive the Steam Machine light bar (valve-leds driver).
+# The driver's nodes are root-only by default; this opens up the light bar attributes only.
+ACTION=="add|change", SUBSYSTEM=="leds", KERNEL=="valve-leds*", RUN+="/usr/bin/chmod -f 0666 /sys%p/brightness /sys%p/multi_intensity /sys%p/effect /sys%p/enabled /sys%p/delay /sys%p/color_shift /sys%p/breath_level /sys%p/breath_offset /sys%p/patrol_num /sys%p/brightness_scale /sys%p/brightness_startup /sys%p/multi_intensity_startup"

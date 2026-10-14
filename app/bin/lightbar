@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Starts the LightBar app. Used by the Steam library tile and the desktop entry.
+HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+APP="$(dirname "$HERE")"
+ROOT="${LIGHTBAR_HOME:-$(dirname "$APP")}"
+mkdir -p "$ROOT/data/logs"
+export LIGHTBAR_HOME="$ROOT" LIGHTBAR_APP="$APP"
+exec "$ROOT/electron/electron" --no-sandbox --ozone-platform=x11 "$APP/electron" "$@" \
+  >>"$ROOT/data/logs/electron.log" 2>&1

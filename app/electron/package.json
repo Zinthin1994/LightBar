@@ -1,0 +1,8 @@
+{
+  "name": "lightbar",
+  "productName": "LightBar",
+  "version": "1.0.0",
+  "description": "Steam Machine light bar settings for SteamOS Game Mode",
+  "main": "main.js",
+  "license": "MIT"
+}
