@@ -205,6 +205,21 @@ main::-webkit-scrollbar-thumb { background: #283247; border-radius: 4px; }
 .presets { display: flex; flex-wrap: wrap; gap: 10px; }
 .picked { display: flex; align-items: center; gap: 14px; }
 .big-sw { width: 64px; height: 36px; border-radius: 8px; background: var(--c); border: 2px solid rgba(255, 255, 255, .2); box-shadow: 0 0 22px var(--c); }
+.preset-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+.preset-row { display: flex; align-items: center; gap: 8px; }
+.preset {
+  flex: 1; display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--line); min-width: 0;
+}
+.preset .strip { width: 120px; flex: none; gap: 2px; padding: 4px; }
+.preset .strip i { height: 7px; border-radius: 2px; }
+.pname { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.opt.check { display: flex; align-items: center; gap: 12px; }
+.opt .box {
+  width: 24px; height: 24px; border-radius: 6px; border: 2px solid var(--line); display: grid; place-items: center;
+  font-weight: 800; color: #fff; flex: none;
+}
+.opt.check.on .box { background: var(--accent); border-color: var(--accent); }
 .opts { display: flex; flex-direction: column; gap: 8px; }
 .opt { padding: 13px 16px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); font-weight: 600; }
 

@@ -56,6 +56,17 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.call('/api/test/stop', {})[0], 200)
         self.call('/api/situation', {'id': 'ready', 'mode': 'steam'})
 
+    def test_presets_and_night(self):
+        code, body = self.call('/api/preset/save', {'name': 'Mine', 'look': {'pattern': 'solid', 'colors': ['#ff0000']}})
+        self.assertEqual((code, json.loads(body)['ok']), (200, True))
+        code, body = self.call('/api/state')
+        self.assertEqual(json.loads(body)['presets']['user'][0]['name'], 'Mine')
+        self.assertEqual(self.call('/api/preset/delete', {'name': 'Mine'})[0], 200)
+        code, body = self.call('/api/night', {'enabled': True, 'from': '23:00', 'to': '06:00', 'mode': 'dim', 'brightness': 12})
+        night = json.loads(body)['night']
+        self.assertEqual((night['enabled'], night['from'], night['brightness']), (True, '23:00', 12))
+        self.call('/api/night', {'enabled': False})
+
     def test_bad_requests(self):
         self.assertEqual(self.call('/api/situation', {'id': 'overheat', 'mode': 'custom', 'look': {'pattern': 'solid'}})[0], 400)
         self.assertEqual(self.call('/api/situation', {'mode': 'custom'})[0], 400)

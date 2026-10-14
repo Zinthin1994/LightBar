@@ -326,6 +326,8 @@ function renderHome() {
       <div class="setting focusable" data-action="toggleEnabled" data-fid="set:enabled"><div class="grow"><div class="t">Use my looks</div>
         <div class="d">Off hands the light bar back to Steam everywhere, without forgetting your looks.</div></div>
         <div class="switch ${st.enabled ? 'on' : ''}"><i></i></div></div>
+      <div class="setting focusable" data-action="night" data-fid="set:night"><div class="grow"><div class="t">Night dimming</div>
+        <div class="d">${esc(nightLine(st.night))}</div></div><span class="chev">›</span></div>
       <div class="setting focusable" data-action="updateCheck" data-fid="set:update"><div class="grow"><div class="t">Check for updates</div>
         <div class="d">${esc(updateLine(st.update))}</div></div><span class="chev">›</span></div>
       <div class="setting focusable" data-action="about" data-fid="set:about"><div class="grow"><div class="t">About LightBar ${esc(st.version)}</div>
@@ -408,10 +410,12 @@ function editPreviewLook() {
   const s = S.state.situations.find((x) => x.id === e.id);
   return (s.observed && s.observed.look) || s.steam || { pattern: 'off' };
 }
-function slider(key, label, val, min, max, unit = '') {
+function slider(key, label, val, min, max, unit = '', opts = {}) {
   const pct = ((val - min) / (max - min)) * 100;
-  return `<div class="slider focusable" data-slider="${key}" data-min="${min}" data-max="${max}" data-fid="sl:${key}">
-    <div class="sl-top"><span>${esc(label)}</span><b>${val}${unit}</b></div>
+  const text = opts.text != null ? opts.text : `${val}${unit}`;
+  return `<div class="slider focusable" data-slider="${key}" data-min="${min}" data-max="${max}" data-val="${val}"
+      ${opts.step ? `data-step="${opts.step}"` : ''} data-fid="sl:${key}">
+    <div class="sl-top"><span>${esc(label)}</span><b>${esc(text)}</b></div>
     <div class="track"><div class="fill" style="width:${pct}%"></div><div class="knob" style="left:${pct}%"></div></div></div>`;
 }
 function renderEdit() {
@@ -426,6 +430,10 @@ function renderEdit() {
       <div class="chip focusable ${e.mode === 'custom' ? 'active' : ''}" data-action="mode" data-mode="custom" data-fid="mode:custom" ${e.mode === 'custom' ? 'data-autofocus' : ''}>My look</div></div></div>`;
     controls += `<div class="field ${steamMode ? 'dim' : ''}"><div class="label">Pattern</div><div class="chips">
       ${PATTERNS.map(([id, label]) => `<div class="chip focusable ${lk.pattern === id ? 'active' : ''}" data-action="pattern" data-p="${id}" data-fid="pat:${id}">${label}</div>`).join('')}</div></div>`;
+    controls += `<div class="field"><div class="label">Looks</div><div class="chips">
+      <div class="chip focusable" data-action="presets" data-fid="lk:presets">Presets…</div>
+      <div class="chip focusable" data-action="savePreset" data-fid="lk:save">Save as preset</div>
+      <div class="chip focusable" data-action="copyTo" data-fid="lk:copy">Copy to…</div></div></div>`;
   }
   const n = e.kind === 'startup' ? 1 : PATTERN[lk.pattern].n;
   if (n) {
@@ -559,6 +567,143 @@ async function leaveEdit(saved) {
 }
 async function poll1() { try { S.state = await api('state'); S.stateJson = JSON.stringify(S.state); renderHeader(); if (S.view === 'home') renderHome(); } catch (e) { /* poll() reports it */ } }
 
+// ================================================================ presets / copy / night
+const copyLook = (look) => JSON.parse(JSON.stringify(look));
+
+function openPresets() {
+  const e = S.edit;
+  const pr = S.state.presets || { builtin: [], user: [] };
+  const row = (p, src, i) => `<div class="preset-row">
+      <div class="preset focusable" data-action="m" data-k="apply" data-src="${src}" data-i="${i}" data-fid="pr:${src}:${i}">
+        ${stripHtml(p.look, 'mini')}<span class="pname">${esc(p.name)}</span></div>
+      ${src === 'user' ? `<button class="btn small focusable" data-action="m" data-k="del" data-i="${i}" data-fid="prd:${i}" title="Delete">✕</button>` : ''}
+    </div>`;
+  const body = () => {
+    const p = S.state.presets || pr;
+    return `${p.user.length ? `<div class="label">Your looks</div><div class="preset-list">${p.user.map((x, i) => row(x, 'user', i)).join('')}</div>` : ''}
+      <div class="label" style="margin-top:14px">Built in</div><div class="preset-list">${p.builtin.map((x, i) => row(x, 'builtin', i)).join('')}</div>`;
+  };
+  const m = openModal({
+    title: 'Presets', cls: 'wide', body: body(),
+    foot: '<button class="btn primary focusable" data-action="m" data-k="close" data-fid="close">Close</button>',
+  });
+  const lookOf = (d) => ((S.state.presets || pr)[d.src] || [])[+d.i];
+  m.actions = {
+    close: () => closeModal(),
+    apply: (d) => {
+      const p = lookOf(d);
+      if (!p) return;
+      closeModal(true);
+      e.look = copyLook(p.look);
+      e.dirty = true;
+      e.mode = 'custom';
+      changed();
+      toast(`Applied "${p.name}". Save to keep it.`);
+    },
+    del: async (d) => {
+      const p = lookOf({ src: 'user', i: d.i });
+      if (!p) return;
+      try {
+        S.state = await api('preset/delete', { name: p.name });
+        patch($('.body', m.el), body());
+      } catch (err) { toast(err.message, true); }
+    },
+  };
+  // X on a focused saved look deletes it
+  m.keys = {
+    x: () => {
+      const f = S.focusedEl;
+      if (f && f.dataset.src === 'user') { m.actions.del({ i: f.dataset.i }); return true; }
+      return false;
+    },
+  };
+}
+
+async function saveAsPreset() {
+  const taken = new Set((S.state.presets && S.state.presets.user || []).map((p) => p.name.toLowerCase()));
+  let n = taken.size + 1;
+  while (taken.has(`my look ${n}`)) n++;
+  const name = `My look ${n}`;
+  try {
+    await api('preset/save', { name, look: S.edit.look });
+    toast(`Saved as "${name}" in Presets`);
+    poll1();
+  } catch (err) { toast(err.message, true); }
+}
+
+function copyToSituations() {
+  const e = S.edit;
+  const targets = S.state.situations.filter((s) => s.kind === 'os' && s.id !== e.id);
+  const sel = new Set();
+  const body = () => `<p class="msg">Use this look for:</p><div class="opts">${targets.map((s, i) => `
+      <div class="opt focusable check ${sel.has(s.id) ? 'on' : ''}" data-action="m" data-k="toggle" data-id="${s.id}" data-fid="cp:${s.id}" ${i ? '' : 'data-autofocus'}>
+        <span class="box">${sel.has(s.id) ? '✓' : ''}</span>${esc(s.name)}</div>`).join('')}</div>`;
+  const m = openModal({
+    title: 'Copy this look to…', body: body(),
+    foot: `<button class="btn focusable" data-action="m" data-k="cancel" data-fid="cancel">Cancel</button>
+           <button class="btn primary focusable" data-action="m" data-k="go" data-fid="go">Copy</button>`,
+  });
+  m.actions = {
+    cancel: () => closeModal(),
+    toggle: (d) => { if (sel.has(d.id)) sel.delete(d.id); else sel.add(d.id); patch($('.body', m.el), body()); },
+    go: async () => {
+      if (!sel.size) return toast('Pick at least one situation', true);
+      closeModal(true);
+      try {
+        for (const id of sel) await api('situation', { id, mode: 'custom', look: e.look });
+        toast(`Copied to ${sel.size} situation${sel.size > 1 ? 's' : ''}`);
+        poll1();
+      } catch (err) { toast(err.message, true); }
+    },
+  };
+}
+
+const halfIdx = (hhmm) => { const [h, mi] = String(hhmm).split(':').map(Number); return clamp(h * 2 + (mi >= 30 ? 1 : 0), 0, 47); };
+const idxTime = (i) => `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`;
+function nightLine(n) {
+  if (!n || !n.enabled) return 'Off. Dim or switch off your looks on a schedule.';
+  const what = n.mode === 'off' ? 'Off' : `Dimmed to ${n.brightness}%`;
+  return `${what} from ${n.from} to ${n.to}${n.active ? ' · active now' : ''}`;
+}
+function openNight() {
+  const n = { ...S.state.night };
+  const body = () => `<div class="picker">
+      <div class="chips">
+        <div class="chip focusable ${n.enabled ? 'active' : ''}" data-action="m" data-k="en" data-fid="n:en" data-autofocus>${n.enabled ? 'Night mode on' : 'Night mode off'}</div>
+        <div class="chip focusable ${n.mode === 'dim' ? 'active' : ''}" data-action="m" data-k="mode" data-v="dim" data-fid="n:dim">Dim</div>
+        <div class="chip focusable ${n.mode === 'off' ? 'active' : ''}" data-action="m" data-k="mode" data-v="off" data-fid="n:off">Turn off</div>
+      </div>
+      ${slider('nfrom', 'From', halfIdx(n.from), 0, 47, '', { step: 1, text: n.from })}
+      ${slider('nto', 'Until', halfIdx(n.to), 0, 47, '', { step: 1, text: n.to })}
+      ${n.mode === 'dim' ? slider('nbright', 'Dim to', n.brightness, 0, 100, '%', { step: 5 }) : ''}
+      <p class="note">Only affects looks LightBar sets. Anything left to Steam is untouched, and
+      a look that's already dimmer than this stays as it is.</p></div>`;
+  const m = openModal({
+    title: 'Night dimming', cls: 'wide', body: body(),
+    foot: `<button class="btn focusable" data-action="m" data-k="cancel" data-fid="cancel">Cancel</button>
+           <button class="btn primary focusable" data-action="m" data-k="save" data-fid="save">Save</button>`,
+  });
+  const redraw = () => patch($('.body', m.el), body());
+  m.slide = (key, val) => {
+    if (key === 'nfrom') n.from = idxTime(val); else if (key === 'nto') n.to = idxTime(val); else n.brightness = val;
+    redraw();
+  };
+  m.actions = {
+    en: () => { n.enabled = !n.enabled; redraw(); },
+    mode: (d) => { n.mode = d.v; redraw(); },
+    cancel: () => closeModal(),
+    save: async () => {
+      try {
+        S.state = await api('night', { enabled: n.enabled, from: n.from, to: n.to, mode: n.mode, brightness: n.brightness });
+        S.stateJson = '';
+        closeModal(true);
+        if (S.view === 'home') renderHome();
+        toast(n.enabled ? 'Night dimming saved' : 'Night dimming is off');
+      } catch (err) { toast(err.message, true); }
+    },
+  };
+}
+
 // ================================================================ color picker
 function pickColor(start, onPick, extra = '') {
   let [h, s, v] = toHsv(hexRgb(start));
@@ -657,6 +802,10 @@ const ACTIONS = {
   back: () => back(),
   exit: () => confirmExit(),
   about: () => about(),
+  presets: () => openPresets(),
+  savePreset: () => saveAsPreset(),
+  copyTo: () => copyToSituations(),
+  night: () => openNight(),
   updateCheck: () => updateCheck(),
   updateDownload: () => updateDownload(),
   updateRestart: () => updateRestart(),
@@ -677,13 +826,14 @@ function runAction(el) { const fn = ACTIONS[el.dataset.action]; if (fn) fn(el.da
 function adjustSlider(el, dir, absolute) {
   const key = el.dataset.slider, min = +el.dataset.min, max = +el.dataset.max;
   const m = topModal();
-  const cur = +el.querySelector('b').textContent.replace(/[^\d-]/g, '');
-  const step = key === 'speed' ? 1 : key === 'hue' ? 6 : 5;
+  const cur = +el.dataset.val;
+  const step = +el.dataset.step || (key === 'speed' ? 1 : key === 'hue' ? 6 : 5);
   const val = clamp(absolute != null ? absolute : cur + dir * step, min, max);
   if (val === cur) return;
   if (m && m.slide) return m.slide(key, val);
   if (!S.edit) return;
   S.edit.look[key] = val;
+  el.dataset.val = val;
   const pct = ((val - min) / (max - min)) * 100;
   el.querySelector('b').textContent = val + (key === 'brightness' ? '%' : '');
   el.querySelector('.fill').style.width = pct + '%';
@@ -752,6 +902,8 @@ requestAnimationFrame(gpLoop);
 
 function press(k) {
   document.body.classList.remove('mouse');
+  const mod = topModal();
+  if (mod && mod.keys && mod.keys[k] && mod.keys[k]()) return;
   const el = S.focusedEl;
   if ((k === 'left' || k === 'right') && el && el.classList.contains('slider') && document.body.contains(el)) {
     return adjustSlider(el, k === 'left' ? -1 : 1);
@@ -784,8 +936,14 @@ window.addEventListener('beforeunload', () => {
     if (r.updated) toast(`Updated to LightBar ${r.updated}`);
     await api('update/check', {});
   } catch (e) { /* offline or an old service: the settings row shows the status */ }
-  const id = decodeURIComponent(location.hash.slice(1));
-  if (id && S.state && S.state.situations.some((s) => s.id === id)) openSituation(id);
+  // #night, #<id>, #<id>/presets, #<id>/copy
+  const [id, sub] = decodeURIComponent(location.hash.slice(1)).split('/');
+  if (id === 'night' && S.state) openNight();
+  else if (id && S.state && S.state.situations.some((s) => s.id === id)) {
+    openSituation(id);
+    if (sub === 'presets') openPresets();
+    if (sub === 'copy') copyToSituations();
+  }
   setTimeout(poll, 1000);
 })();
 renderHints();

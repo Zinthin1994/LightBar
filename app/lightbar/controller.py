@@ -12,7 +12,7 @@ import threading
 import time
 from collections import deque
 
-from . import VERSION, paths
+from . import VERSION, paths, presets
 from .looks import DEFAULT_LOOK, from_hardware, normalize, same, HEX
 from .situations import BY_ID, CONTROLLABLE, SITUATIONS, DownloadWatcher, detect, scan_processes
 from .util import log, read_json, write_json
@@ -22,15 +22,49 @@ VERIFY_EVERY = 3.0
 SLOW_VERIFY = 20.0       # when something keeps changing the bar back
 STABLE_FOR = 3.0         # seconds in a situation before Steam's look there is recorded
 MAX_TEST_SECONDS = 120
+MAX_PRESETS = 30
+DEFAULT_NIGHT = {'enabled': False, 'from': '22:00', 'to': '07:00', 'mode': 'dim', 'brightness': 15}
+
+
+def _hhmm(value, default):
+    """Validate a 'HH:MM' string, else the default."""
+    try:
+        h, m = str(value).split(':')
+        h, m = int(h), int(m)
+        if 0 <= h < 24 and 0 <= m < 60:
+            return f'{h:02d}:{m:02d}'
+    except (ValueError, AttributeError):
+        pass
+    return default
+
+
+def _minutes(hhmm):
+    h, m = hhmm.split(':')
+    return int(h) * 60 + int(m)
+
+
+def _local_minutes(ts):
+    lt = time.localtime(ts)
+    return lt.tm_hour * 60 + lt.tm_min
+
+
+def in_window(now, start, end):
+    """now within [start, end) in minutes-since-midnight, with a window that may cross midnight."""
+    if start == end:
+        return False
+    return start <= now < end if start < end else (now >= start or now < end)
 
 
 class Controller:
-    def __init__(self, bar, watcher=None, scan=scan_processes, clock=time.monotonic, wall=time.time):
+    def __init__(self, bar, watcher=None, scan=scan_processes, clock=time.monotonic, wall=time.time,
+                 now_minutes=None):
         self.bar = bar
         self.watcher = watcher if watcher is not None else DownloadWatcher()
         self.scan = scan
         self.clock = clock
         self.wall = wall
+        # minutes since local midnight, injectable so tests don't depend on the clock/timezone
+        self.now_minutes = now_minutes or (lambda: _local_minutes(self.wall()))
         self.lock = threading.RLock()
         self.config = self._load_config()
         self.observed = read_json(paths.OBSERVED, {}) or {}
@@ -56,10 +90,47 @@ class Controller:
                 look = None
             sits[sid] = {'mode': 'custom' if e.get('mode') == 'custom' and look else 'steam',
                          'look': look or dict(DEFAULT_LOOK)}
-        return {'enabled': raw.get('enabled', True) is not False, 'situations': sits}
+        user_presets = []
+        for e in (raw.get('presets') or [])[:MAX_PRESETS]:
+            try:
+                user_presets.append({'name': str(e['name'])[:40], 'look': normalize(e['look'])})
+            except (KeyError, TypeError, ValueError):
+                pass
+        return {'enabled': raw.get('enabled', True) is not False, 'situations': sits,
+                'presets': user_presets, 'night': self._clean_night(raw.get('night'))}
+
+    @staticmethod
+    def _clean_night(raw):
+        raw = raw or {}
+        n = dict(DEFAULT_NIGHT)
+        n['enabled'] = bool(raw.get('enabled'))
+        n['from'] = _hhmm(raw.get('from'), DEFAULT_NIGHT['from'])
+        n['to'] = _hhmm(raw.get('to'), DEFAULT_NIGHT['to'])
+        if raw.get('mode') in ('dim', 'off'):
+            n['mode'] = raw['mode']
+        try:
+            n['brightness'] = max(0, min(100, int(raw.get('brightness', DEFAULT_NIGHT['brightness']))))
+        except (TypeError, ValueError):
+            pass
+        return n
 
     def _save_config(self):
         write_json(paths.CONFIG, self.config)
+
+    def _night_active(self):
+        n = self.config['night']
+        return bool(n['enabled']) and in_window(self.now_minutes(), _minutes(n['from']), _minutes(n['to']))
+
+    def _apply_night(self, look):
+        """At night, dim or turn off a look LightBar is about to show."""
+        if not self._night_active():
+            return look
+        n = self.config['night']
+        if n['mode'] == 'off':
+            return {'pattern': 'off', 'colors': [], 'brightness': 0, 'speed': look['speed']}
+        if look['brightness'] <= n['brightness']:
+            return look
+        return {**look, 'colors': list(look['colors']), 'brightness': n['brightness']}
 
     def target(self, sid):
         """The look LightBar should show for a situation, or None to leave it to Steam."""
@@ -100,7 +171,7 @@ class Controller:
     def _settle(self, now):
         look = self.target(self.situation)
         if look:
-            self._show(look, now)
+            self._show(self._apply_night(look), now)
         elif self.applied is not None:
             self._hand_back()
         elif self.situation and now - self.since >= STABLE_FOR:
@@ -193,6 +264,33 @@ class Controller:
             if not self.test:
                 self._settle(self.clock())
 
+    def set_night(self, cfg):
+        with self.lock:
+            self.config['night'] = self._clean_night(cfg)
+            log.info('Night dimming: %s', self.config['night'])
+            self._save_config()
+            if not self.test:
+                self._settle(self.clock())
+            return self.config['night']
+
+    def save_preset(self, name, look):
+        name = str(name or '').strip()[:40]
+        if not name:
+            raise ValueError('A preset needs a name')
+        look = normalize(look)
+        with self.lock:
+            p = [x for x in self.config['presets'] if x['name'].lower() != name.lower()]
+            p.insert(0, {'name': name, 'look': look})
+            self.config['presets'] = p[:MAX_PRESETS]
+            self._save_config()
+            log.info('Saved preset %r', name)
+        return {'ok': True, 'name': name}
+
+    def delete_preset(self, name):
+        with self.lock:
+            self.config['presets'] = [x for x in self.config['presets'] if x['name'] != name]
+            self._save_config()
+
     def start_test(self, look, seconds=20):
         look = normalize(look)
         seconds = max(1, min(MAX_TEST_SECONDS, int(seconds or 20)))
@@ -250,4 +348,6 @@ class Controller:
                 'controlling': self.applied is not None and not self.test,
                 'live': from_hardware(self.bar.read_state(), info),
                 'situations': sits,
+                'presets': {'builtin': presets.BUILTIN, 'user': self.config['presets']},
+                'night': {**self.config['night'], 'active': self._night_active()},
             }

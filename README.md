@@ -9,6 +9,14 @@ Set up the light bar on the front of your Steam Machine from Game Mode, with a c
   or off, with color, brightness and speed. An animated preview shows it in the app.
 - **Test it on the real light bar.** While testing, every change shows up on the Steam
   Machine straight away.
+- **Presets.** Thirteen built-in looks (Ember, Ocean, Aurora, Candle, ...) plus your own:
+  **Save as preset** in the editor stores the current look, **Presets…** applies one.
+- **Copy to…** reuses a look for other situations in one go.
+- **Night dimming.** Dim your looks, or switch them off, between two times (it can cross
+  midnight). It only touches looks LightBar sets; whatever is left to Steam is not touched,
+  and a look already dimmer than the night level stays as it is.
+- **Updates.** The app checks GitHub for a newer release when it opens and installs it
+  after you press Download and Restart; a version that fails to start is rolled back.
 - **It stays on.** A small background service (`lightbar.service`) applies your looks when
   the app is closed and after a restart. If Steam changes the light bar during one of your
   looks, LightBar puts it back within a few seconds.

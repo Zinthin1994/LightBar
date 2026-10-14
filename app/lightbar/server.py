@@ -28,10 +28,11 @@ UPDATER = None
 
 def route(method, parts, body):
     c = CTRL
+    full = lambda: {**c.snapshot(), 'update': UPDATER.snapshot()}
     if method == 'GET' and parts == ['ping']:
         return {'ok': True, 'version': VERSION}
     if method == 'GET' and parts == ['state']:
-        return {**c.snapshot(), 'update': UPDATER.snapshot()}
+        return full()
     if method != 'POST':
         return None
     if parts == ['update', 'check']:
@@ -42,7 +43,7 @@ def route(method, parts, body):
         return UPDATER.confirm()
     if parts == ['situation']:
         c.set_situation(str(body['id']), body['mode'], body.get('look'))
-        return c.snapshot()
+        return full()
     if parts == ['test']:
         return c.start_test(body['look'], body.get('seconds', 20))
     if parts == ['test', 'stop']:
@@ -50,10 +51,18 @@ def route(method, parts, body):
         return {'ok': True}
     if parts == ['startup']:
         c.set_startup(body['color'], body['brightness'])
-        return c.snapshot()
+        return full()
     if parts == ['enabled']:
         c.set_enabled(body['enabled'])
-        return c.snapshot()
+        return full()
+    if parts == ['night']:
+        c.set_night(body)
+        return full()
+    if parts == ['preset', 'save']:
+        return c.save_preset(body.get('name'), body['look'])
+    if parts == ['preset', 'delete']:
+        c.delete_preset(str(body['name']))
+        return full()
     return None
 
 
