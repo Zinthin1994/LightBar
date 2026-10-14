@@ -296,6 +296,7 @@ function renderHome() {
   if (st.error) banners.push(['bad', esc(st.error)]);
   if (!st.enabled) banners.push(['warn', 'LightBar is paused: Steam controls the light bar in every situation.']);
   const sits = st.situations;
+  const upd = updateBanner(st.update);
   const card = (s) => {
     const sh = shownFor(s);
     const now = st.situation === s.id;
@@ -308,6 +309,7 @@ function renderHome() {
   const live = st.live || { pattern: 'off' };
   const liveSrc = st.testing ? 'Testing a look' : st.controlling ? 'Your look' : 'Steam\'s look';
   const html = `<div class="page">
+    ${upd}
     ${banners.map(([c, m]) => `<div class="banner ${c}">${m}</div>`).join('')}
     <section class="hero">
       <div class="hero-text"><div class="eyebrow">Right now on your Steam Machine</div>
@@ -324,10 +326,63 @@ function renderHome() {
       <div class="setting focusable" data-action="toggleEnabled" data-fid="set:enabled"><div class="grow"><div class="t">Use my looks</div>
         <div class="d">Off hands the light bar back to Steam everywhere, without forgetting your looks.</div></div>
         <div class="switch ${st.enabled ? 'on' : ''}"><i></i></div></div>
+      <div class="setting focusable" data-action="updateCheck" data-fid="set:update"><div class="grow"><div class="t">Check for updates</div>
+        <div class="d">${esc(updateLine(st.update))}</div></div><span class="chev">›</span></div>
       <div class="setting focusable" data-action="about" data-fid="set:about"><div class="grow"><div class="t">About LightBar ${esc(st.version)}</div>
         <div class="d">${st.hardware.found ? `${st.hardware.count} LEDs found · ${st.hardware.writable ? 'writable' : 'no write permission'}` : 'No light bar driver found'}</div></div><span class="chev">›</span></div>
     </div></div>`;
   patch($('#main'), html);
+}
+
+// ================================================================ updates
+function updateLine(u) {
+  if (!u) return '';
+  const when = u.checked ? ` · checked ${ago(u.checked)}` : '';
+  switch (u.status) {
+    case 'checking': return 'Checking GitHub...';
+    case 'available': return `LightBar ${u.latest} is available (you have ${u.current})`;
+    case 'downloading': return `Downloading ${u.latest}... ${u.progress}%`;
+    case 'ready': return `LightBar ${u.latest} is ready: restart to install it`;
+    case 'needs_installer': return `LightBar ${u.latest} needs install.sh to be run again`;
+    case 'failed': return `LightBar ${u.latest} didn't start on this machine and was rolled back`;
+    case 'error': return u.error || 'The update check failed';
+    case 'uptodate': return `LightBar ${u.current} is the latest version${when}`;
+    default: return `LightBar ${u.current}`;
+  }
+}
+function updateBanner(u) {
+  if (!u) return '';
+  const btn = (action, label, fid, primary) =>
+    `<button class="btn small ${primary ? 'primary' : ''} focusable" data-action="${action}" data-fid="${fid}">${label}</button>`;
+  const row = (cls, text, buttons = '') => `<div class="banner ${cls} with-actions"><span>${text}</span><span class="acts">${buttons}</span></div>`;
+  const notes = u.notes ? btn('updateNotes', 'What\'s new', 'upd:notes') : '';
+  if (u.status === 'available') return row('info', `<b>LightBar ${esc(u.latest)}</b> is available.`, notes + btn('updateDownload', 'Download', 'upd:go', true));
+  if (u.status === 'downloading') return row('info', `Downloading LightBar ${esc(u.latest)}... ${u.progress}%`);
+  if (u.status === 'ready') return row('good', `<b>LightBar ${esc(u.latest)}</b> is ready to install.`, notes + btn('updateRestart', 'Restart now', 'upd:go', true));
+  if (u.status === 'needs_installer') return row('warn', `LightBar ${esc(u.latest)} needs a new runtime: run <code>install.sh</code> from the release to update.`);
+  if (u.status === 'error' && u.checked !== undefined && S.updateAsked) return row('warn', esc(u.error || 'The update check failed'), btn('updateCheck', 'Retry', 'upd:retry'));
+  return '';
+}
+async function updateDownload() {
+  try { await api('update/check', { download: true }); } catch (e) { toast(e.message, true); }
+}
+async function updateRestart() {
+  if (!window.lightbar) return toast('Close and reopen LightBar to install the update');
+  const r = await window.lightbar.restart();
+  if (r && r.reopen) toast('Open LightBar again from your Steam library to finish the update');
+}
+function updateNotes() {
+  const u = S.state && S.state.update;
+  if (!u) return;
+  const m = openModal({
+    title: `LightBar ${u.latest}`, body: `<p class="msg" style="white-space:pre-wrap">${esc(u.notes || 'No release notes.')}</p>`,
+    foot: '<button class="btn primary focusable" data-action="m" data-k="close" data-fid="close" data-autofocus>Close</button>',
+  });
+  m.actions = { close: () => closeModal() };
+}
+async function updateCheck() {
+  S.updateAsked = true;
+  try { await api('update/check', {}); } catch (e) { toast(e.message, true); }
 }
 
 // ================================================================ editor
@@ -602,6 +657,10 @@ const ACTIONS = {
   back: () => back(),
   exit: () => confirmExit(),
   about: () => about(),
+  updateCheck: () => updateCheck(),
+  updateDownload: () => updateDownload(),
+  updateRestart: () => updateRestart(),
+  updateNotes: () => updateNotes(),
   toggleEnabled: async () => {
     try { S.state = await api('enabled', { enabled: !S.state.enabled }); S.stateJson = ''; renderHome(); } catch (e) { toast(e.message, true); }
   },
@@ -718,6 +777,13 @@ window.addEventListener('beforeunload', () => {
 // #<situation id> opens that situation directly (the desktop entry or a script can link to one)
 (async () => {
   await poll1();
+  // opening the app: tell the service this version started fine (ends an update's trial run),
+  // then look for a newer release on GitHub once. The service does the work in the background.
+  try {
+    const r = await api('update/confirm', {});
+    if (r.updated) toast(`Updated to LightBar ${r.updated}`);
+    await api('update/check', {});
+  } catch (e) { /* offline or an old service: the settings row shows the status */ }
   const id = decodeURIComponent(location.hash.slice(1));
   if (id && S.state && S.state.situations.some((s) => s.id === id)) openSituation(id);
   setTimeout(poll, 1000);

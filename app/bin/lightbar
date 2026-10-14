@@ -1,9 +1,58 @@
 #!/usr/bin/env bash
 # Starts the LightBar app. Used by the Steam library tile and the desktop entry.
+# Before starting it installs a LightBar update the app has downloaded and verified
+# (ROOT/update, see lightbar/updater.py), restarts the service on the new code, and rolls
+# back to the previous version if an update fails to start twice.
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 APP="$(dirname "$HERE")"
 ROOT="${LIGHTBAR_HOME:-$(dirname "$APP")}"
+U="$ROOT/update"
 mkdir -p "$ROOT/data/logs"
+
+ulog() { echo "$(date '+%F %T') $*" >>"$ROOT/data/logs/update.log"; }
+
+stop_service() { systemctl --user stop lightbar.service 2>/dev/null; }
+# the service runs the app's code, so a swapped app only takes effect after a restart
+start_service() { systemctl --user restart lightbar.service 2>/dev/null; }
+restart_self() { start_service; cd "$APP" && exec "$APP/bin/lightbar" "$@"; }
+
+# ---------------------------------------------------------------- rollback
+# trial.json exists until the new version's UI reports in (POST /api/update/confirm).
+if [ -f "$U/trial.json" ] && [ -d "$ROOT/app.prev" ]; then
+  tries=$(( $(cat "$U/trial.tries" 2>/dev/null || echo 0) + 1 ))
+  if [ "$tries" -gt 2 ]; then
+    stop_service
+    ulog "update $(cat "$U/trial.json") did not start twice - rolling back"
+    rm -rf "$U/failed-app"
+    if mv "$APP" "$U/failed-app" && mv "$ROOT/app.prev" "$APP"; then
+      mv "$U/trial.json" "$U/failed.json"
+      rm -f "$U/trial.tries"
+      restart_self "$@"
+    fi
+    ulog "rollback failed"
+  else
+    echo "$tries" >"$U/trial.tries"
+  fi
+fi
+
+# ---------------------------------------------------------------- install a staged update
+if [ -f "$U/ready.json" ] && [ -f "$U/app/bin/lightbar" ] && [ ! -f "$U/trial.json" ]; then
+  stop_service
+  rm -rf "$ROOT/app.prev"
+  if mv "$APP" "$ROOT/app.prev"; then
+    if mv "$U/app" "$APP"; then
+      mv "$U/ready.json" "$U/trial.json"
+      rm -f "$U/trial.tries" "$U/failed.json"
+      rm -rf "$U/failed-app"
+      ulog "installed update $(cat "$U/trial.json")"
+      restart_self "$@"
+    fi
+    mv "$ROOT/app.prev" "$APP"
+  fi
+  ulog "could not install the update (file move failed)"
+  start_service
+fi
+
 export LIGHTBAR_HOME="$ROOT" LIGHTBAR_APP="$APP"
 exec "$ROOT/electron/electron" --no-sandbox --ozone-platform=x11 "$APP/electron" "$@" \
   >>"$ROOT/data/logs/electron.log" 2>&1

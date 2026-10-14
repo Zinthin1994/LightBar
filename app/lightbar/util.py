@@ -3,7 +3,10 @@ import logging
 import os
 import threading
 
+from . import VERSION
+
 log = logging.getLogger('lightbar')
+USER_AGENT = f'LightBar/{VERSION}'
 _write_lock = threading.Lock()
 
 

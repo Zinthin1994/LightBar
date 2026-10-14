@@ -75,6 +75,11 @@ main::-webkit-scrollbar-thumb { background: #283247; border-radius: 4px; }
 
 .banner { padding: 12px 16px; border-radius: 10px; margin-bottom: 12px; border: 1px solid; font-size: .92rem; }
 .banner.warn { color: #f7d38a; background: rgba(240, 181, 68, .1); border-color: rgba(240, 181, 68, .35); }
+.banner.with-actions { display: flex; align-items: center; gap: 14px; }
+.banner.with-actions > span:first-child { flex: 1; }
+.banner .acts { display: flex; gap: 10px; }
+.banner.info { color: #bfe3ff; background: rgba(26, 159, 255, .1); border-color: rgba(26, 159, 255, .4); }
+.banner.good { color: #b5efc8; background: rgba(87, 201, 123, .1); border-color: rgba(87, 201, 123, .4); }
 .banner.bad { color: #ffb4b4; background: rgba(239, 90, 90, .1); border-color: rgba(239, 90, 90, .4); }
 
 /* ------------------------------------------------------------ light bar strips */

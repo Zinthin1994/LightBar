@@ -65,8 +65,23 @@ function createWindow() {
   win.loadURL(`${BASE}/`);
 }
 
-ipcMain.handle('quit', (e) => {
-  if (e.senderFrame && isOurs(e.senderFrame.url)) app.quit();
+const fromUi = (e) => !!(e.senderFrame && isOurs(e.senderFrame.url));
+const inGameMode = () => (process.env.XDG_CURRENT_DESKTOP || '').toLowerCase() === 'gamescope'
+  || !!process.env.GAMESCOPE_WAYLAND_DISPLAY || process.env.SteamGamepadUI === '1';
+
+ipcMain.handle('quit', (e) => { if (fromUi(e)) app.quit(); });
+// Restart to install a downloaded update (bin/lightbar swaps it in on start). In Game Mode
+// Steam has to start LightBar again from its tile, otherwise it wouldn't be shown, so the
+// app just closes there and returns { reopen: true }.
+ipcMain.handle('restart', (e) => {
+  if (!fromUi(e)) return { reopen: true };
+  const script = path.join(APP_DIR, 'bin', 'lightbar');
+  const reopen = inGameMode() || process.platform !== 'linux' || !fs.existsSync(script);
+  if (!reopen) {
+    spawn('bash', ['-c', 'sleep 2; exec "$0"', script], { cwd: ROOT, detached: true, stdio: 'ignore' }).unref();
+  }
+  setTimeout(() => app.quit(), 300);
+  return { reopen };
 });
 
 app.whenReady().then(async () => {

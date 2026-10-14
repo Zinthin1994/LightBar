@@ -37,3 +37,9 @@ with tarfile.open(OUT, 'w:gz') as tar:
     for item in INCLUDE:
         add(tar, os.path.join(ROOT, item), f'LightBar/{item}')
 print(OUT, os.path.getsize(OUT), 'bytes')
+
+# The app's updater downloads the release asset named LightBar.tar.gz (same file, stable name).
+LATEST = os.path.join(os.path.dirname(OUT), 'LightBar.tar.gz')
+with open(OUT, 'rb') as src, open(LATEST, 'wb') as dst:
+    dst.write(src.read())
+print(LATEST)

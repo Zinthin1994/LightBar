@@ -40,6 +40,12 @@ class ServerTest(unittest.TestCase):
         code, body = self.call('/')
         self.assertIn(b'<title>LightBar</title>', body)
 
+    def test_state_includes_update_status(self):
+        code, body = self.call('/api/state')
+        upd = json.loads(body)['update']
+        self.assertEqual(upd['current'], __import__('lightbar').VERSION)
+        self.assertEqual(self.call('/api/update/confirm', {})[0], 200)
+
     def test_save_and_test(self):
         look = {'pattern': 'solid', 'colors': ['#ff0000']}
         code, body = self.call('/api/situation', {'id': 'ready', 'mode': 'custom', 'look': look})

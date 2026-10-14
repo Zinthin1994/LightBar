@@ -17,11 +17,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from . import VERSION, paths
 from .controller import Controller
 from .leds import open_bar
+from .updater import Updater
 from .util import log
 
 ALLOWED_HOSTS = {f'127.0.0.1:{paths.PORT}', f'localhost:{paths.PORT}'}
 ALLOWED_ORIGINS = {f'http://{h}' for h in ALLOWED_HOSTS}
 CTRL = None
+UPDATER = None
 
 
 def route(method, parts, body):
@@ -29,9 +31,15 @@ def route(method, parts, body):
     if method == 'GET' and parts == ['ping']:
         return {'ok': True, 'version': VERSION}
     if method == 'GET' and parts == ['state']:
-        return c.snapshot()
+        return {**c.snapshot(), 'update': UPDATER.snapshot()}
     if method != 'POST':
         return None
+    if parts == ['update', 'check']:
+        # runs in the background; the UI sees progress through /api/state
+        UPDATER.check_async(bool(body.get('download')))
+        return {**UPDATER.snapshot(), 'status': 'checking' if UPDATER.status != 'ready' else 'ready'}
+    if parts == ['update', 'confirm']:
+        return UPDATER.confirm()
     if parts == ['situation']:
         c.set_situation(str(body['id']), body['mode'], body.get('look'))
         return c.snapshot()
@@ -132,9 +140,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(500, {'error': str(e)})
 
 
-def make_server(controller, port=None):
-    global CTRL
+def make_server(controller, port=None, updater=None):
+    global CTRL, UPDATER
     CTRL = controller
+    UPDATER = updater or Updater()
     srv = ThreadingHTTPServer(('127.0.0.1', paths.PORT if port is None else port), Handler)
     srv.daemon_threads = True
     return srv
